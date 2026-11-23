@@ -10,6 +10,7 @@ import { MissionRunner, loadSave, storeSave, blankSave } from './missions.js';
 import { GameAudio } from './audio.js';
 import { HUD } from './hud.js';
 import { stageShot, shotNameFromUrl } from './shots.js';
+import { initTouchControls } from './touch.js';
 import { clamp, lerp, mulberry32, dist2d } from './utils.js';
 
 window.__errors = [];
@@ -171,8 +172,18 @@ export function createGame() {
   addEventListener('keyup', (e) => { keys[e.code] = false; });
   addEventListener('pointermove', (e) => { G.mouseX = e.clientX; G.mouseY = e.clientY; });
   addEventListener('pointerdown', (e) => {
+    if (e.target.closest && e.target.closest('#touch-controls')) return; // touch buttons drive input themselves
     audio.init(); audio.resume();
     if (G.state === 'playing' && !G.inCar) shoot();
+  });
+  // ---- touch controls (phones/tablets) -----------------------------------------
+  // Same keys object + same actions as the keyboard; no-op on desktop.
+  const touch = initTouchControls(keys, {
+    onWake: () => { audio.init(); audio.resume(); },
+    onCar: () => { if (G.inCar) exitCar(); else tryEnterCar(); },
+    isInCar: () => !!G.inCar,
+    onShoot: () => { if (G.state === 'playing' && !G.inCar) shoot(); },
+    onPause: () => { if (G.state === 'playing') pauseGame(); else if (G.state === 'paused') resumeGame(); },
   });
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
@@ -180,7 +191,7 @@ export function createGame() {
   });
 
   // ---- UI wiring ---------------------------------------------------------------
-  function setHudVisible(v) { $('hud').style.display = v ? 'block' : 'none'; }
+  function setHudVisible(v) { $('hud').style.display = v ? 'block' : 'none'; if (touch) touch.setVisible(v); }
   function hideScreens() {
     for (const id of ['title-screen', 'pause-screen', 'end-screen', 'controls-screen']) $(id).classList.add('hidden');
   }
