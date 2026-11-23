@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>SOLMAR BAY: HEAT TIDE — Open World</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0e1a;
+    font-family: "Segoe UI", Verdana, sans-serif; color: #fff; }
+  #game { position: fixed; inset: 0; }
+  #game canvas { display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    font-size: 13px; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
+  .panel { background: rgba(8, 12, 24, .72); border: 1px solid rgba(255, 170, 60, .35);
+    border-radius: 6px; padding: 8px 10px; backdrop-filter: blur(2px); }
+  .panel h3 { font-size: 11px; letter-spacing: 2px; color: #ffb347; margin-bottom: 5px;
+    text-transform: uppercase; }
+  #hud-tl { position: absolute; top: 12px; left: 12px; width: 320px; }
+  #mission-panel { margin-bottom: 8px; }
+  #job-label { color: #ffd166; font-weight: 800; font-size: 14px; letter-spacing: 1px; }
+  #mission-timer { float: right; color: #7df9ff; font-weight: 800; font-variant-numeric: tabular-nums; }
+  #mission-stage { height: 6px; background: rgba(255,255,255,.15); border-radius: 3px; margin: 6px 0 4px; overflow: hidden; }
+  #mission-stage-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #ff9f1c, #ff3860); }
+  #mission-objective { font-size: 12px; color: #e8f0ff; line-height: 1.35; }
+  #dispatch-list { font-size: 11px; line-height: 1.5; }
+  #dispatch-list .unit { display: flex; justify-content: space-between; }
+  #dispatch-list .unit b { color: #ff8fa3; }
+  .chip { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 800;
+    letter-spacing: 1px; background: #ff3860; color: #fff; margin-left: 4px; }
+  .chip.spot { background: #ffb347; color: #201400; }
+  .chip.road { background: #7df9ff; color: #06222b; }
+  #hud-tr { position: absolute; top: 12px; right: 12px; text-align: right; width: 300px; }
+  #clock { font-size: 15px; font-weight: 800; color: #fff; letter-spacing: 1px; }
+  #cash { font-size: 34px; font-weight: 900; color: #39ff6a; line-height: 1;
+    text-shadow: 0 0 12px rgba(57,255,106,.55), 0 2px 2px rgba(0,0,0,.8); font-variant-numeric: tabular-nums; }
+  #stars { font-size: 22px; letter-spacing: 2px; margin: 2px 0; color: #3a3f52; }
+  #stars .on { color: #ffd166; text-shadow: 0 0 10px rgba(255,209,102,.9); }
+  #insight-badge { display: inline-block; background: #ff3860; color: #fff; font-size: 10px; font-weight: 800;
+    letter-spacing: 1px; padding: 2px 7px; border-radius: 3px; }
+  #insight-badge.hidden { display: none; }
+  #weapon-bar { display: flex; gap: 4px; justify-content: flex-end; margin-top: 8px; }
+  .wslot { width: 46px; background: rgba(8,12,24,.72); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 5px; padding: 3px 2px 2px; text-align: center; }
+  .wslot.active { border-color: #ffd166; box-shadow: 0 0 8px rgba(255,209,102,.6); }
+  .wslot svg { width: 26px; height: 22px; display: block; margin: 0 auto; }
+  .wslot .wname { font-size: 8px; letter-spacing: .5px; color: #cfd8ff; }
+  .wslot .ammo { font-size: 10px; color: #7df9ff; font-weight: 700; }
+  .wslot.locked { opacity: .35; }
+  #hud-bl { position: absolute; left: 12px; bottom: 12px; width: 230px; }
+  #crew-cards { display: flex; gap: 6px; margin-bottom: 6px; }
+  .crew { flex: 1; background: rgba(8,12,24,.72); border: 1px solid rgba(125,249,255,.4);
+    border-radius: 6px; padding: 5px; text-align: center; }
+  .crew img { width: 34px; height: 34px; border-radius: 50%; display: block; margin: 0 auto 3px;
+    border: 2px solid #7df9ff; }
+  .crew .cname { font-size: 10px; font-weight: 800; }
+  .crew .crole { font-size: 9px; color: #9fd8ff; }
+  #radar-wrap { position: relative; width: 190px; height: 190px; margin: 0 auto 6px; }
+  #radar { width: 190px; height: 190px; border-radius: 50%;
+    border: 3px solid rgba(255, 179, 71, .8); box-shadow: 0 0 18px rgba(0,0,0,.6); background: #0d1526; }
+  .bar-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 10px; font-weight: 800; }
+  .bar-row .blabel { width: 44px; color: #ffb347; letter-spacing: 1px; }
+  .bar-track { flex: 1; height: 9px; background: rgba(255,255,255,.15); border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; }
+  #health-fill { background: linear-gradient(90deg, #2ee66b, #a4ff5e); width: 100%; }
+  #armor-fill { background: linear-gradient(90deg, #4cc9f0, #7df9ff); width: 0%; }
+  #respect-badge { margin-top: 6px; font-size: 11px; color: #ffd166; font-weight: 800; letter-spacing: 1px; }
+  #district-name { font-size: 12px; color: #fff; font-weight: 700; letter-spacing: 1px; margin-top: 2px; }
+  #hud-bc { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); width: 520px; }
+  #dialog { display: none; background: rgba(8,12,24,.85); border: 1px solid rgba(255,209,102,.55);
+    border-radius: 8px; padding: 10px 12px; }
+  #dialog.show { display: flex; gap: 10px; align-items: center; }
+  #dialog img { width: 52px; height: 52px; border-radius: 50%; border: 2px solid #ffd166; flex: none; }
+  #dialog-name { color: #ffd166; font-weight: 800; font-size: 13px; letter-spacing: 1px; }
+  #dialog-text { font-size: 13px; line-height: 1.4; color: #f2f6ff; margin-top: 2px; }
+  #hud-br { position: absolute; right: 12px; bottom: 12px; width: 300px; text-align: right; }
+  #radio-ticker { background: rgba(8,12,24,.72); border: 1px solid rgba(125,249,255,.4); border-radius: 6px;
+    padding: 6px 10px; margin-bottom: 6px; pointer-events: auto; cursor: pointer; }
+  #radio-station { color: #7df9ff; font-weight: 800; font-size: 12px; letter-spacing: 1px; }
+  #radio-track { color: #e8f0ff; font-size: 11px; }
+  #vehicle-name { font-size: 15px; font-weight: 800; letter-spacing: 1px; color: #fff; }
+  .gauge-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; justify-content: flex-end; }
+  .gauge-row .blabel { font-size: 10px; font-weight: 800; color: #ffb347; letter-spacing: 1px; width: 62px; }
+  .gauge-row .bar-track { width: 150px; flex: none; }
+  #condition-fill { background: linear-gradient(90deg, #2ee66b, #a4ff5e); width: 100%; }
+  #nos-fill { background: linear-gradient(90deg, #4361ee, #7df9ff); width: 100%; }
+  #speedo { font-size: 56px; font-weight: 900; line-height: 1; color: #fff;
+    text-shadow: 0 0 16px rgba(255,159,28,.6), 0 2px 2px rgba(0,0,0,.8); font-variant-numeric: tabular-nums; }
+  #speedo small { font-size: 16px; color: #ffb347; letter-spacing: 2px; }
+  #popups { position: fixed; left: 50%; top: 34%; transform: translateX(-50%); text-align: center; z-index: 6;
+    pointer-events: none; }
+  .popup { font-size: 26px; font-weight: 900; color: #ffd166; letter-spacing: 1px;
+    text-shadow: 0 0 14px rgba(255,159,28,.8), 0 2px 2px rgba(0,0,0,.9); margin-bottom: 4px; }
+  .popup.cash { color: #39ff6a; }
+  .screen { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(180deg, rgba(10,8,24,.25) 0%, rgba(10,8,24,.55) 60%, rgba(10,8,24,.85) 100%); }
+  .screen.hidden { display: none; }
+  .title-box { text-align: center; max-width: 860px; padding: 20px; }
+  .title-kicker { color: #7df9ff; letter-spacing: 6px; font-size: 13px; font-weight: 800; }
+  .title-main { font-size: 84px; font-weight: 900; line-height: .95; letter-spacing: 2px;
+    background: linear-gradient(180deg, #fff 15%, #ffd166 45%, #ff6b35 75%, #ff3860 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 4px 30px rgba(255,107,53,.35); }
+  .title-sub { font-size: 30px; font-weight: 900; letter-spacing: 12px; color: #ff3860;
+    text-shadow: 0 0 18px rgba(255,56,96,.7); margin-top: 2px; }
+  .title-tag { margin-top: 10px; color: #e8f0ff; font-size: 14px; letter-spacing: 1px; }
+  .title-cols { display: flex; gap: 24px; margin-top: 22px; align-items: flex-start; justify-content: center; }
+  .menu { display: flex; flex-direction: column; gap: 10px; width: 280px; }
+  .menu button { pointer-events: auto; cursor: pointer; font-size: 16px; font-weight: 800; letter-spacing: 2px;
+    padding: 12px; border-radius: 8px; border: 1px solid rgba(255,209,102,.7); color: #201400;
+    background: linear-gradient(180deg, #ffd166, #ff9f1c); }
+  .menu button.alt { background: rgba(8,12,24,.8); color: #ffd166; }
+  .menu button:disabled { opacity: .4; cursor: default; }
+  .save-cards { width: 300px; text-align: left; }
+  .save-cards h3 { font-size: 11px; letter-spacing: 2px; color: #ffb347; margin-bottom: 8px; }
+  .save-card { background: rgba(8,12,24,.8); border: 1px solid rgba(125,249,255,.4); border-radius: 8px;
+    padding: 10px; display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .save-card img { width: 44px; height: 44px; border-radius: 50%; border: 2px solid #7df9ff; }
+  .save-card .sname { font-weight: 800; font-size: 13px; }
+  .save-card .smeta { font-size: 11px; color: #9fd8ff; line-height: 1.45; }
+  .screen h2 { font-size: 34px; letter-spacing: 3px; font-weight: 900; }
+  .screen p { margin-top: 8px; color: #dfe8ff; font-size: 14px; line-height: 1.5; }
+  .screen .menu { margin: 18px auto 0; }
+  #controls-screen .panel { text-align: left; max-width: 560px; margin: 16px auto 0; line-height: 1.9; }
+  #controls-screen .panel b { color: #ffd166; display: inline-block; min-width: 130px; }
+  #toast { position: fixed; top: 46%; left: 50%; transform: translate(-50%,-50%); z-index: 7; pointer-events: none;
+    font-size: 20px; font-weight: 800; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,.9); display: none; }
+</style>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js"}}</script>
+</head>
+<body>
+<div id="game"></div>
+<div id="hud">
+  <div id="hud-tl">
+    <div id="mission-panel" class="panel">
+      <h3>Mission</h3>
+      <div><span id="job-label">JOB 1/8 — HEAT TIDE</span><span id="mission-timer">--:--</span></div>
+      <div id="mission-stage"><div id="mission-stage-fill"></div></div>
+      <div id="mission-objective">Meet Tia Rosa at the pier.</div>
+    </div>
+    <div id="dispatch-panel" class="panel">
+      <h3>Solmar PD — Dispatch</h3>
+      <div id="dispatch-list"><div class="unit"><span>NO ACTIVE PURSUIT</span><b>—</b></div></div>
+    </div>
+  </div>
+  <div id="hud-tr">
+    <div id="clock">17:19</div>
+    <div id="cash">$8,770</div>
+    <div id="stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
+    <span id="insight-badge" class="hidden">IN SIGHT</span>
+    <div id="weapon-bar"></div>
+  </div>
+  <div id="hud-bl">
+    <div id="crew-cards"></div>
+    <div id="radar-wrap"><canvas id="radar" width="190" height="190"></canvas></div>
+    <div class="bar-row"><span class="blabel">HEALTH</span><div class="bar-track"><div id="health-fill" class="bar-fill"></div></div></div>
+    <div class="bar-row"><span class="blabel">ARMOR</span><div class="bar-track"><div id="armor-fill" class="bar-fill"></div></div></div>
+    <div id="respect-badge">RESPECT — ROOKIE · 0/250</div>
+    <div id="district-name">SANTA MARIA BEACH</div>
+  </div>
+  <div id="hud-bc">
+    <div id="dialog"><img id="dialog-portrait" alt=""><div><div id="dialog-name">TIA ROSA</div><div id="dialog-text"></div></div></div>
+  </div>
+  <div id="hud-br">
+    <div id="radio-ticker"><div id="radio-station">♪ Radio Solmar 98.6</div><div id="radio-track">“Guava Sunrise” — Neon Coast</div></div>
+    <div id="vehicle-name">ON FOOT</div>
+    <div class="gauge-row"><span class="blabel">CONDITION</span><div class="bar-track"><div id="condition-fill" class="bar-fill"></div></div></div>
+    <div class="gauge-row"><span class="blabel">NOS</span><div class="bar-track"><div id="nos-fill" class="bar-fill"></div></div></div>
+    <div id="speedo">0 <small>MPH</small></div>
+  </div>
+</div>
+<div id="popups"></div>
+<div id="toast"></div>
+
+<div id="title-screen" class="screen">
+  <div class="title-box">
+    <div class="title-kicker">SOLMAR BAY PRESENTS</div>
+    <div class="title-main">SOLMAR BAY</div>
+    <div class="title-sub">HEAT TIDE</div>
+    <div class="title-tag">An original open-world crime story — 8 jobs, the Comet GT, and the whole Solmar PD after you.</div>
+    <div class="title-cols">
+      <div class="menu">
+        <button id="btn-new">▶ NEW GAME</button>
+        <button id="btn-continue" class="alt">CONTINUE</button>
+        <button id="btn-controls" class="alt">CONTROLS</button>
+      </div>
+      <div class="save-cards">
+        <h3>SAVE FILE</h3>
+        <div id="save-card-1"></div>
+        <div id="save-card-2"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="pause-screen" class="screen hidden">
+  <div class="title-box">
+    <h2>PAUSED</h2>
+    <p>Solmar Bay waits for no one — except right now.</p>
+    <div class="menu"><button id="btn-resume">RESUME</button><button id="btn-quit-title" class="alt">QUIT TO TITLE</button></div>
+  </div>
+</div>
+
+<div id="end-screen" class="screen hidden">
+  <div class="title-box">
+    <h2 id="end-title">BUSTED</h2>
+    <p id="end-text"></p>
+    <div class="menu"><button id="btn-restart">TRY AGAIN</button><button id="btn-end-title" class="alt">TITLE SCREEN</button></div>
+  </div>
+</div>
+
+<div id="controls-screen" class="screen hidden">
+  <div class="title-box">
+    <h2>CONTROLS</h2>
+    <div class="panel">
+      <div><b>W A S D</b> move / drive &nbsp;·&nbsp; <b>Mouse</b> aim &nbsp;·&nbsp; <b>Click</b> shoot</div>
+      <div><b>Shift</b> nitro (in car) &nbsp;·&nbsp; <b>Space</b> handbrake drift &nbsp;·&nbsp; <b>E</b> enter / steal car</div>
+      <div><b>1 – 5</b> weapons &nbsp;·&nbsp; <b>R</b> reload &nbsp;·&nbsp; <b>M</b> radio channel &nbsp;·&nbsp; <b>C</b> camera</div>
+      <div><b>Esc</b> pause &nbsp;·&nbsp; <b>F</b> pay respect (hide wanted) at a safehouse</div>
+    </div>
+    <div class="menu"><button id="btn-controls-back">BACK</button></div>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
