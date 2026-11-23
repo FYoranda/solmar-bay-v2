@@ -55,12 +55,14 @@ export function createGame() {
   const save = loadSave() || blankSave();
   const G = {
     state: 'title', shotFrozen: false, cameraMode: 'orbit',
+    camera,
     time: 0, clockMin: 17 * 60 + 19, cash: save.cash, respect: save.respect,
     wanted: 0, hiddenT: 0, kills: 0, rams: 0, stoleTarget: false,
     health: save.health, armor: save.armor,
     weapon: 'fists', ammo: Object.assign({ pistol: 24, smg: 60, rpg: 2 }, save.ammo),
     owned: save.weapons.slice(), nos: 1, condition: 1,
-    inCar: null, carSpeed: 0, carHeading: 0, drifting: false, nitro: false,
+    inCar: null, carSpeed: 0, carHeading: 0, steerCur: 0, carLat: 0, drifting: false, nitro: false,
+    camVel: new THREE.Vector3(), camLook: new THREE.Vector3(), camSnap: false,
     fovKick: 0, shake: 0, orbitAngle: 0.6, hudSpeedOverride: null,
     mouseX: 0, mouseY: 0, aimYaw: 0,
   };
@@ -70,7 +72,7 @@ export function createGame() {
   const player = makeCharacter({ jacket: 0x27324a, skin: '#c98d64', hair: '#1a1210', glasses: true, hat: false });
   player.group.position.set(-40, 0, 128);
   scene.add(player.group);
-  const playerState = { x: -40, z: 128, heading: 0, vy: 0, onGround: true, speed: 0 };
+  const playerState = { x: -40, z: 128, heading: 0, vy: 0, onGround: true, speed: 0, coyote: 0, jumpBuf: 0 };
   G.playerState = playerState;
 
   // gun prop in the player's right hand
@@ -92,7 +94,7 @@ export function createGame() {
     const car = makeVehicle(spec);
     car.group.position.set(x, groundHeight(x, z), z);
     car.group.rotation.y = heading;
-    car.group.userData.carRef = { spec, mesh: car.group, parked: true, isTarget: !!isTarget, condition: 1 };
+    car.group.userData.carRef = { spec, mesh: car.group, parked: true, isTarget: !!isTarget, condition: 1, veh: car };
     scene.add(car.group);
     parked.push(car.group.userData.carRef);
     return car.group.userData.carRef;
@@ -184,6 +186,11 @@ export function createGame() {
     isInCar: () => !!G.inCar,
     onShoot: () => { if (G.state === 'playing' && !G.inCar) shoot(); },
     onPause: () => { if (G.state === 'playing') pauseGame(); else if (G.state === 'paused') resumeGame(); },
+    onSelectWeapon: (n) => {
+      const w = WEAPONS[n - 1];
+      if (w && G.owned.includes(w.id)) { G.weapon = w.id; updateGunProp(); }
+    },
+    getWeapons: () => ({ owned: G.owned.slice(), current: G.weapon }),
   });
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
@@ -242,8 +249,10 @@ export function createGame() {
   function resetPlayer() {
     exitCar(true);
     playerState.x = -40; playerState.z = 128; playerState.heading = 0; playerState.vy = 0;
+    playerState.onGround = true; playerState.coyote = 0; playerState.jumpBuf = 0;
     player.group.position.set(-40, 0, 128);
     G.health = 100; G.wanted = 0; G.hiddenT = 0; G.carSpeed = 0; G.condition = 1; G.nos = 1;
+    G.steerCur = 0; G.carLat = 0; G.camVel.set(0, 0, 0); G.camLook.set(-40, 2, 128); G.camSnap = true;
     for (const u of police) u.mesh.position.set(400, 0, 400);
     roadblock.clear(); roadblockPlaced = false; airOne.hide();
   }
@@ -304,6 +313,7 @@ export function createGame() {
       if (next && G.cash >= 500) {
         G.cash -= 500; G.owned.push(next.id); save.weapons = G.owned.slice(); save.cash = G.cash;
         storeSave(save);
+        if (touch) touch.refreshWeapons(); // un-grey the new weapon button right away
         hud.toast(`${next.name} bought — $500. Press ${WEAPONS.indexOf(next) + 1} to equip.`);
       } else if (next) hud.toast('Gun shop: need $500 for the ' + next.name + '.');
       else hud.toast('Gun shop: fully stocked.');
@@ -317,6 +327,7 @@ export function createGame() {
     const w = G.weapon;
     gunProp.visible = w !== 'fists' && w !== 'bat';
     player.armR.rotation.x = 0;
+    if (touch) touch.refreshWeapons();
   }
 
   // ---- combat ---------------------------------------------------------------------
@@ -474,6 +485,28 @@ export function createGame() {
     return [nx, nz];
   }
 
+  // ---- sliding collision --------------------------------------------------------
+  // Does a circle of radius r at (x,z) overlap any collider or the world edge?
+  function hitsCollider(x, z, r) {
+    for (const c of world.colliders) {
+      const cx = clamp(x, c.x0, c.x1), cz = clamp(z, c.z0, c.z1);
+      const dx = x - cx, dz = z - cz;
+      if (dx * dx + dz * dz < r * r) return true;
+    }
+    if (x < -235 + r || x > 235 - r || z < -235 + r || z > 262 - r) return true;
+    if (z > 182 - r && !(x > 50 && x < 70) && !(x > WORLD.bridgeX - 8 && x < WORLD.bridgeX + 8)) return true;
+    return false;
+  }
+  // Move by (dx,dz), sliding along walls: try the full move, then x-only,
+  // then z-only, so a wall graze keeps the tangential motion instead of
+  // catching and stopping the player/car. Returns [nx, nz].
+  function slideMove(x, z, dx, dz, r) {
+    if (!hitsCollider(x + dx, z + dz, r)) return [x + dx, z + dz];
+    if (dx !== 0 && !hitsCollider(x + dx, z, r)) return [x + dx, z];
+    if (dz !== 0 && !hitsCollider(x, z + dz, r)) return [x, z + dz];
+    return [x, z];
+  }
+
   // ---- per-frame updates -------------------------------------------------------------------
   const clock = new THREE.Clock();
   let frames = 0;
@@ -495,22 +528,44 @@ export function createGame() {
       if (!fwd && !back) G.carSpeed -= Math.sign(G.carSpeed) * 6 * dt;
       if (Math.abs(G.carSpeed) < 0.2 && !fwd && !back) G.carSpeed = 0;
       G.carSpeed = clamp(G.carSpeed, -14, top);
-      const steerInput = (left ? 1 : 0) - (right ? 1 : 0);
+      // --- progressive steering (analog-friendly) ---
+      // steerInput is continuous (-1..1): the touch joystick's analog X when
+      // present, otherwise the binary A/D keys. Steering builds smoothly
+      // toward the target instead of snapping, so corners feel progressive.
+      const joyX = (typeof keys._joyX === 'number') ? keys._joyX : 0;
+      const steerInput = joyX !== 0 ? clamp(-joyX, -1, 1) : (left ? 1 : 0) - (right ? 1 : 0);
       const steerMax = 0.55 / (1 + Math.abs(G.carSpeed) * 0.045);
-      const steer = steerInput * steerMax * (G.drifting ? 1.6 : 1);
-      G.carHeading += steer * clamp(Math.abs(G.carSpeed) / 8, 0, 1) * Math.sign(G.carSpeed || 1) * dt * 2.2;
+      const steerTarget = steerInput * steerMax * (G.drifting ? 1.6 : 1);
+      const steerRate = 3.2 + Math.abs(G.carSpeed) * 0.02;
+      G.steerCur += clamp(steerTarget - G.steerCur, -steerRate * dt, steerRate * dt);
+      G.carHeading += G.steerCur * clamp(Math.abs(G.carSpeed) / 8, 0, 1) * Math.sign(G.carSpeed || 1) * dt * 2.2;
       car.mesh.rotation.y = G.carHeading;
-      car.setSteer(steer * 0.5);
-      car.setWheelSpin(G.carSpeed * 0.9);
-      let nx = car.mesh.position.x + Math.sin(G.carHeading) * G.carSpeed * dt;
-      let nz = car.mesh.position.z + Math.cos(G.carHeading) * G.carSpeed * dt;
+      if (car.veh) { car.veh.setSteer(G.steerCur * 0.5); car.veh.setWheelSpin(G.carSpeed * 0.9); }
+      // --- lateral grip: the car carries a sideways velocity that the road
+      // grips. Steering at speed pushes it sideways; grip damps the slide
+      // (strong normally, loose while drifting) so corners feel like a car.
+      const grip = G.drifting ? 1.6 : 7.0;
+      G.carLat += G.steerCur * G.carSpeed * dt * 2.4;
+      G.carLat *= Math.exp(-grip * dt);
+      G.carLat = clamp(G.carLat, -9, 9);
+      const fx = Math.sin(G.carHeading), fz = Math.cos(G.carHeading);
+      const rx = Math.cos(G.carHeading), rz = -Math.sin(G.carHeading);
+      const vx = fx * G.carSpeed + rx * G.carLat;
+      const vz = fz * G.carSpeed + rz * G.carLat;
       const before = [car.mesh.position.x, car.mesh.position.z];
-      [nx, nz] = collideCircle(nx, nz, 1.9);
-      const hitWall = Math.hypot(nx - before[0], nz - before[1]) < Math.abs(G.carSpeed) * dt * 0.55;
+      const slid = slideMove(before[0], before[1], vx * dt, vz * dt, 1.9);
+      const nx = slid[0], nz = slid[1];
+      // Wall contact: a graze keeps sliding (small penalty); only a near
+      // head-on stop costs condition and speed.
+      const wantLen = Math.hypot(vx * dt, vz * dt);
+      const gotLen = Math.hypot(nx - before[0], nz - before[1]);
+      const hitWall = wantLen > 0.001 && gotLen < wantLen * 0.55;
       if (hitWall && Math.abs(G.carSpeed) > 6) {
-        G.condition = Math.max(0.2, G.condition - 0.05);
-        G.shake = Math.min(1, G.shake + 0.4);
-        G.carSpeed *= 0.45;
+        const hard = gotLen < wantLen * 0.25;
+        G.condition = Math.max(0.2, G.condition - (hard ? 0.05 : 0.015));
+        G.shake = Math.min(1, G.shake + (hard ? 0.4 : 0.15));
+        G.carSpeed *= hard ? 0.45 : 0.85;
+        G.carLat *= 0.5;
         audio.blip(70, 0.2, 'sine', 0.3);
       }
       car.mesh.position.x = nx; car.mesh.position.z = nz;
@@ -570,27 +625,49 @@ export function createGame() {
       // --- on foot ---
       const run = keys.ShiftLeft || keys.ShiftRight;
       const sp = run ? 8.5 : 5.2;
+      // Analog joystick (touch) gives a continuous move vector; keyboard
+      // gives binary keys. Joystick: _joyX +1 = right, _joyY -1 = up/forward.
+      const joyX = (typeof keys._joyX === 'number') ? keys._joyX : 0;
+      const joyY = (typeof keys._joyY === 'number') ? keys._joyY : 0;
       let mx = 0, mz = 0;
       const camYaw = Math.atan2(camera.position.x - ps.x, camera.position.z - ps.z);
-      if (keys.KeyW || keys.ArrowUp) { mx += Math.sin(camYaw + Math.PI); mz += Math.cos(camYaw + Math.PI); }
-      if (keys.KeyS || keys.ArrowDown) { mx -= Math.sin(camYaw + Math.PI); mz -= Math.cos(camYaw + Math.PI); }
-      if (keys.KeyA || keys.ArrowLeft) { mx += Math.sin(camYaw + Math.PI / 2); mz += Math.cos(camYaw + Math.PI / 2); }
-      if (keys.KeyD || keys.ArrowRight) { mx -= Math.sin(camYaw + Math.PI / 2); mz -= Math.cos(camYaw + Math.PI / 2); }
+      const fwdX = Math.sin(camYaw + Math.PI), fwdZ = Math.cos(camYaw + Math.PI);
+      const leftX = Math.sin(camYaw + Math.PI / 2), leftZ = Math.cos(camYaw + Math.PI / 2);
+      if (joyX !== 0 || joyY !== 0) {
+        mx = fwdX * (-joyY) + (-leftX) * joyX;
+        mz = fwdZ * (-joyY) + (-leftZ) * joyX;
+      } else {
+        if (keys.KeyW || keys.ArrowUp) { mx += fwdX; mz += fwdZ; }
+        if (keys.KeyS || keys.ArrowDown) { mx -= fwdX; mz -= fwdZ; }
+        if (keys.KeyA || keys.ArrowLeft) { mx += leftX; mz += leftZ; }
+        if (keys.KeyD || keys.ArrowRight) { mx -= leftX; mz -= leftZ; }
+      }
       const ml = Math.hypot(mx, mz);
+      // Air control is decoupled: horizontal input works on the ground AND
+      // in the air (slightly reduced while airborne, so jumps stay weighty).
+      const airMul = ps.onGround ? 1 : 0.85;
       if (ml > 0.01) {
+        const mag = Math.min(1, ml);
         mx /= ml; mz /= ml;
         const want = Math.atan2(mx, mz);
         let diff = want - ps.heading;
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
         ps.heading += clamp(diff, -8 * dt, 8 * dt);
-        ps.speed = sp;
-        let nx = ps.x + mx * sp * dt, nz = ps.z + mz * sp * dt;
-        [nx, nz] = collideCircle(nx, nz, 0.6);
-        ps.x = nx; ps.z = nz;
+        ps.speed = sp * mag;
+        const step = sp * mag * airMul * dt;
+        const moved = slideMove(ps.x, ps.z, mx * step, mz * step, 0.6);
+        ps.x = moved[0]; ps.z = moved[1];
         player.setWalk(dt, 1);
       } else { ps.speed = 0; player.setIdle(); }
-      if (keys.Space && ps.onGround) { ps.vy = 7; ps.onGround = false; }
+      // Coyote time + jump buffer: jump works briefly after leaving a ledge,
+      // and a jump pressed just before landing fires on landing — so running
+      // while jumping is 100% smooth.
+      if (ps.onGround) ps.coyote = 0.12; else ps.coyote = Math.max(0, ps.coyote - dt);
+      if (keys.Space) ps.jumpBuf = 0.12; else ps.jumpBuf = Math.max(0, ps.jumpBuf - dt);
+      if (ps.jumpBuf > 0 && (ps.onGround || ps.coyote > 0)) {
+        ps.vy = 7; ps.onGround = false; ps.coyote = 0; ps.jumpBuf = 0;
+      }
       ps.vy -= 22 * dt;
       let py = player.group.position.y + ps.vy * dt;
       const gy = groundHeight(ps.x, ps.z);
@@ -728,8 +805,27 @@ export function createGame() {
     if (lat) { back.x += Math.cos(heading) * lat; back.z += -Math.sin(heading) * lat; }
     const want = target.position.clone().add(back);
     want.y = Math.max(want.y, groundHeight(want.x, want.z) + 2.2);
-    camera.position.lerp(want, 1 - Math.pow(0.0001, dt));
-    const look = target.position.clone().add(new THREE.Vector3(Math.sin(heading) * 7, G.inCar ? 1.2 : 1.6, Math.cos(heading) * 7));
+    const lookRaw = target.position.clone().add(new THREE.Vector3(Math.sin(heading) * 7, G.inCar ? 1.2 : 1.6, Math.cos(heading) * 7));
+    if (G.camSnap) {
+      // First chase frame after a reset: snap to the ideal point (no swoop
+      // from the title orbit). The spring takes over from here.
+      camera.position.copy(want);
+      G.camVel.set(0, 0, 0);
+      G.camLook.copy(lookRaw);
+      G.camSnap = false;
+    } else {
+      // Spring-damper chase camera: the camera is a mass on a spring chasing
+      // the ideal point, so it lags and settles smoothly instead of snapping.
+      const stiff = 26, damp = 9;
+      G.camVel.x += (want.x - camera.position.x) * stiff * dt;
+      G.camVel.y += (want.y - camera.position.y) * stiff * dt;
+      G.camVel.z += (want.z - camera.position.z) * stiff * dt;
+      G.camVel.multiplyScalar(Math.exp(-damp * dt));
+      camera.position.addScaledVector(G.camVel, dt);
+      // Smooth the look target too, so the view never whips.
+      G.camLook.lerp(lookRaw, 1 - Math.pow(0.001, dt));
+    }
+    const look = G.camLook.clone();
     if (G.shake > 0) {
       look.x += (Math.random() - 0.5) * G.shake * 0.7;
       look.y += (Math.random() - 0.5) * G.shake * 0.5;
